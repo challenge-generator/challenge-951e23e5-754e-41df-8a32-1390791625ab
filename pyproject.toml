@@ -1,0 +1,41 @@
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "gobierno-datos-pipeline"
+version = "0.1.0"
+description = "Pipeline ETL para gobierno de datos en servicios financieros"
+authors = ["Ingeniero de Datos <datos@fintechcorp.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.13"
+apache-airflow = "2.9.2"
+pyspark = "3.5.0"
+great-expectations = "0.18.12"
+boto3 = "1.34.0"
+pydantic = "2.7.1"
+pyyaml = "6.0.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "8.1.1"
+
+[tool.poetry.plugins."airflow.plugins"]
+"gobierno_datos_plugin" = "gobierno_datos_plugin.plugin:GobiernoDatosPlugin"
+
+# Configuración para AWS Glue Sessions
+[[tool.poetry.source]]
+name = "pypi"
+priority = "primary"
+
+# Configuración para pytest
+[tool.pytest.ini_options]
+addopts = "-v"
+testpaths = ["tests"]
+
+# Configuración para Great Expectations
+expectations_store_name = "expectations_store"
+validations_store_name = "validations_store"
+checkpoint_store_name = "checkpoint_store"
+datasources = {}

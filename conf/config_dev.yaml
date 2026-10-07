@@ -1,0 +1,428 @@
+# Configuración del entorno de desarrollo para el pipeline de gobierno de datos
+# FintechCorp - Pipeline ETL con Airflow, Spark y Great Expectations
+# Este archivo contiene la configuración específica del ambiente de desarrollo
+# Las credenciales aquí son simuladas y deben reemplazarse en producción
+
+# ==============================================================================
+# CONFIGURACIÓN GENERAL DEL AMBIENTE
+# ==============================================================================
+ambiente: "desarrollo"
+version_pipeline: "0.1.0"
+modo_ejecucion: "local"  # local, airflow, glue
+log_level: "DEBUG"
+
+# ==============================================================================
+# CONFIGURACIÓN DE AIRFLOW
+# ==============================================================================
+airflow:
+  # Conexiones configuradas en Airflow Metadata Database
+  connections:
+    aws_default:
+      conn_id: "aws_default"
+      conn_type: "aws"
+      login: "AKIAIOSFODNN7EXAMPLE"  # Credencial simulada - NO usar en producción
+      password: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"  # Simulado
+      extra:
+        region_name: "us-east-1"
+        
+    redshift_default:
+      conn_id: "redshift_default"
+      conn_type: "redshift"
+      login: "dev_user"
+      password: "dev_password_simulated"
+      host: "fintech-dev.redshift.amazonaws.com"
+      port: 5439
+      schema: "fintech_dev"
+      extra:
+        db_name: "fintech_analytics"
+        cluster_identifier: "fintech-dev-cluster"
+        iam_role: "arn:aws:iam::123456789012:role/RedshiftCopyRole"
+    
+    s3_logs:
+      conn_id: "s3_logs"
+      conn_type: "s3"
+      extra:
+        bucket: "fintech-dev-logs"
+        prefix: "pipeline-logs/"
+  
+  # Variables de Airflow para el pipeline
+  variables:
+    pipeline_name: "gobierno_datos_pipeline"
+    fecha_ejecucion: "{{ ds }}"
+    ruta_datos_raw: "s3://fintech-dev-raw-data/"
+    ruta_datos_procesados: "s3://fintech-dev-processed/"
+    ruta_datos_quarantine: "s3://fintech-dev-quarantine/"
+    ruta_logs_calidad: "s3://fintech-dev-logs/quality/"
+
+# ==============================================================================
+# CONFIGURACIÓN DE AWS
+# ==============================================================================
+aws:
+  region: "us-east-1"
+  account_id: "123456789012"
+  
+  # Configuración de S3
+  s3:
+    buckets:
+      raw_data: "fintech-dev-raw-data"
+      processed_data: "fintech-dev-processed"
+      quarantine: "fintech-dev-quarantine"
+      logs: "fintech-dev-logs"
+      backups: "fintech-dev-backups"
+    
+    # Prefijos por origen de datos
+    prefijos:
+      transacciones: "transacciones/"
+      analitica: "analitica/"
+      maestro: "maestro/"
+    
+    # Configuración de particionado
+    particionado:
+      formato: "parquet"
+      compresion: "snappy"
+      esquema_fecha: "yyyy/mm/dd"  # Particionado por fecha para optimización
+  
+  # Configuración de Redshift
+  redshift:
+    cluster_endpoint: "fintech-dev.redshift.amazonaws.com"
+    port: 5439
+    database: "fintech_analytics"
+    schema: "fintech_dev"
+    
+    # Tablas del data warehouse
+    tablas:
+      transacciones_procesadas: "stg_transacciones"
+      analitica_procesada: "stg_analitica"
+      maestro_procesado: "stg_maestro"
+      calidad_registros: "audit_calidad_datos"
+      linaje_ejecucion: "audit_linaje_ejecucion"
+    
+    # Configuración de COPY
+    copy_options:
+      formato: "parquet"
+      tiempo_fuera: 60
+      maxerror: 1000
+      acceptinvchars: ""
+      
+  # Configuración de Glue
+  glue:
+    catalog_name: "fintech_dev_catalog"
+    database: "fintech_dev"
+    
+    # Crawlers configurados
+    crawlers:
+      transacciones:
+        name: "fintech-dev-transacciones-crawler"
+        schedule: "cron(0 2 * * ? *)"
+        table_prefix: "raw_"
+      
+      analitica:
+        name: "fintech-dev-analitica-crawler"
+        schedule: "cron(0 3 * * ? *)"
+        table_prefix: "raw_"
+    
+    # Jobs de transformación
+    jobs:
+      transformacion:
+        name: "fintech-dev-transform-job"
+        worker_type: "G.1X"
+        number_of_workers: 10
+        max_retries: 3
+
+# ==============================================================================
+# CONFIGURACIÓN DE CALIDAD DE DATOS
+# ==============================================================================
+calidad_datos:
+  # Umbrales de calidad - deben cumplir 99.9% de precisión según requisitos
+  umbrales:
+    precision_minima: 99.9  # Porcentaje mínimo de registros válidos
+    completitud_minima: 98.0  # Porcentaje de campos no nulos
+    consistencia_maxima: 1.0  # Porcentaje máximo de inconsistencias
+    duplicados_maximo: 0.5  # Porcentaje máximo de duplicados permitidos
+    
+  # Reglas de validación por origen
+  reglas_por_origen:
+    transacciones:
+      - nombre: "validar_id_transaccion"
+        tipo: "not_null"
+        columna: "id_transaccion"
+        severidad: "critica"
+        
+      - nombre: "validar_monto_positivo"
+        tipo: "greater_than"
+        columna: "monto"
+        valor: 0
+        severidad: "critica"
+        
+      - nombre: "validar_fecha_transaccion"
+        tipo: "between_dates"
+        columna: "fecha_transaccion"
+        min: "2020-01-01"
+        max: "{{ ds }}"
+        severidad: "alta"
+        
+      - nombre: "validar_codigo_moneda"
+        tipo: "isin"
+        columna: "codigo_moneda"
+        valores: ["USD", "EUR", "MXN", "COP", "BRL", "ARS"]
+        severidad: "media"
+        
+      - nombre: "validar_tipo_transaccion"
+        tipo: "isin"
+        columna: "tipo_transaccion"
+        valores: ["pago", "transferencia", "retiro", "deposito", "ajuste"]
+        severidad: "media"
+        
+    analitica:
+      - nombre: "validar_id_sesion"
+        tipo: "not_null"
+        columna: "id_sesion"
+        severidad: "critica"
+        
+      - nombre: "validar_duracion_positiva"
+        tipo: "greater_than_or_equal"
+        columna: "duracion_segundos"
+        valor: 0
+        severidad: "alta"
+        
+      - nombre: "validar_timestamp_evento"
+        tipo: "not_null"
+        columna: "timestamp_evento"
+        severidad: "critica"
+        
+    maestro:
+      - nombre: "validar_id_cliente"
+        tipo: "not_null"
+        columna: "id_cliente"
+        severidad: "critica"
+        
+      - nombre: "validar_tipo_identificacion"
+        tipo: "isin"
+        columna: "tipo_identificacion"
+        valores: ["CC", "CE", "PAS", "NIT", "RUC"]
+        severidad: "alta"
+        
+      - nombre: "validar_fecha_nacimiento"
+        tipo: "between_dates"
+        columna: "fecha_nacimiento"
+        min: "1900-01-01"
+        max: "{{ macros.ds_add(ds, -6570) }}"  # 18 años atrás
+        severidad: "alta"
+  
+  # Configuración de cuarentena
+  cuarentena:
+    enabled: true
+    ruta: "s3://fintech-dev-quarantine/"
+    retencion_dias: 30  # Los registros malos se retienen 30 días para auditoría
+    notificacion_email: "calidad-datos@fintechcorp.com"
+    
+  # Configuración de Great Expectations
+  great_expectations:
+    expectations_store: "s3://fintech-dev-validations/expectations/"
+    validations_store: "s3://fintech-dev-validations/results/"
+    checkpoint_store: "s3://fintech-dev-validations/checkpoints/"
+    data_docs_site: "s3://fintech-dev-docs/quality/"
+    
+# ==============================================================================
+# CONFIGURACIÓN DE LINAGE Y TRAZABILIDAD
+# ==============================================================================
+linaje:
+  # Configuración de AWS Glue Data Catalog para linaje
+  glue_catalog:
+    enabled: true
+    database: "fintech_dev"
+    
+  # Tablas de auditoría
+  audit:
+    calidad_tabla: "audit_calidad_datos"
+    linaje_tabla: "audit_linaje_ejecucion"
+    
+    columnas_audit:
+      - nombre: "id_ejecucion"
+        tipo: "string"
+        descripcion: "UUID de la ejecución del pipeline"
+        
+      - nombre: "timestamp_ejecucion"
+        tipo: "timestamp"
+        descripcion: "Fecha y hora de la ejecución"
+        
+      - nombre: "origen_datos"
+        tipo: "string"
+        descripcion: "Sistema de origen de los datos"
+        
+      - nombre: "tabla_destino"
+        tipo: "string"
+        descripcion: "Tabla destino en Redshift"
+        
+      - nombre: "registros_procesados"
+        tipo: "bigint"
+        descripcion: "Cantidad de registros procesados"
+        
+      - nombre: "registros_exitosos"
+        tipo: "bigint"
+        descripcion: "Cantidad de registros exitosos"
+        
+      - nombre: "registros_fallidos"
+        tipo: "bigint"
+        descripcion: "Cantidad de registros que fallaron validación"
+        
+      - nombre: "calidad_porcentaje"
+        tipo: "decimal(5,2)"
+        descripcion: "Porcentaje de calidad alcanzado"
+        
+      - nombre: "version_esquema"
+        tipo: "string"
+        descripcion: "Versión del esquema utilizado"
+        
+      - nombre: "usuario_ejecucion"
+        tipo: "string"
+        descripcion: "Usuario que ejecutó el pipeline"
+
+# ==============================================================================
+# CONFIGURACIÓN DE RENDIMIENTO Y LATENCIA
+# ==============================================================================
+rendimiento:
+  # Requisitos: latencia máxima de 2 segundos en actualización de registros
+  latencia_maxima_segundos: 2
+  
+  # Configuración de Spark
+  spark:
+    master: "local[*]"
+    app_name: "gobierno_datos_pipeline"
+    
+    config:
+      spark.sql.shuffle.partitions: 200
+      spark.default.parallelism: 100
+      spark.sql.adaptive.enabled: "true"
+      spark.sql.adaptive.coalescePartitions.enabled: "true"
+      spark.dynamicAllocation.enabled: "true"
+      spark.dynamicAllocation.minExecutors: 2
+      spark.dynamicAllocation.maxExecutors: 10
+      
+    # Configuración de memoria
+    memoria:
+      driver_memory: "4g"
+      executor_memory: "4g"
+      executor_cores: 2
+  
+  # Configuración de procesamiento paralelo
+  procesamiento:
+    batch_size: 10000  # Registros por batch
+    max_workers: 20  # Máximo de workers paralelos
+    timeout_minutos: 30  # Timeout por tarea
+    
+  # Volumen: hasta 10 millones de transacciones diarias
+  volumen:
+    transacciones_diarias_max: 10000000
+    tamano_batch_optimo: 500000
+
+# ==============================================================================
+# CONFIGURACIÓN DE RETENCIÓN Y RESPALDO
+# ==============================================================================
+retencion:
+  # Requisito: trazabilidad de datos por al menos 5 años
+  periodos:
+    datos_raw_dias: 90  # Datos crudos retención mínima
+    datos_procesados_dias: 1825  # 5 años = 1825 días
+    logs_dias: 365  # Logs por 1 año
+    validaciones_dias: 730  # 2 años de validaciones
+    backups_dias: 1825  # 5 años de backups
+    
+  # Configuración de respaldo
+  backup:
+    enabled: true
+    frecuencia: "diario"
+    ruta: "s3://fintech-dev-backups/"
+    retencion_en_dias: 1825
+    
+  # Eliminación automática
+  limpieza_automatica:
+    enabled: true
+    hora_ejecucion: "02:00"  # 2 AM
+    dias_antiguedad_minima: 90
+
+# ==============================================================================
+# CONFIGURACIÓN DE NOTIFICACIONES Y ALERTAS
+# ==============================================================================
+notificaciones:
+  email:
+    enabled: true
+    smtp_host: "smtp.fintechcorp.com"
+    smtp_port: 587
+    from_address: "pipeline-datos@fintechcorp.com"
+    
+    destinatarios:
+     -alertas: "equipo-datos@fintechcorp.com"
+      -calidad: "calidad-datos@fintechcorp.com"
+      -infra: "infraestructura@fintechcorp.com"
+  
+  # Alertas por umbral
+  alertas:
+    calidad_baja:
+      enabled: true
+      umbral: 95.0  # Alertar si calidad cae bajo 95%
+      severidad: "alta"
+      
+    volumen_anomalo:
+      enabled: true
+      variacion_porcentaje: 20  # Alertar si varías más del 20%
+      severidad: "media"
+      
+    latencia_alta:
+      enabled: true
+      umbral_segundos: 5  # Alertar si latency > 5 segundos
+      severidad: "alta"
+      
+    errores_procesamiento:
+      enabled: true
+      severidad: "critica"
+      
+# ==============================================================================
+# CONFIGURACIÓN DE SEGURIDAD
+# ==============================================================================
+seguridad:
+  # Configuración de encriptación
+  encriptacion:
+    s3: "AES256"  # Encriptación en S3
+    redshift: "TLS_1_2"  # Encriptación en Redshift
+    
+  # Configuración de acceso
+  acceso:
+    iam_role: "arn:aws:iam::123456789012:role/DataPipelineRole"
+    kms_key: "arn:aws:kms:us-east-1:123456789012:key/data-pipeline-key"
+    
+  # Configuración de red
+  red:
+    vpc_id: "vpc-0123456789abcdef0"
+    subnet_ids:
+      - "subnet-0123456789abcdef1"
+      - "subnet-0123456789abcdef2"
+    security_group: "sg-0123456789abcdef0"
+
+# ==============================================================================
+# CONFIGURACIÓN DE MONITOREO
+# ==============================================================================
+monitoreo:
+  # CloudWatch
+  cloudwatch:
+    enabled: true
+    namespace: "FintechCorp/DataPipeline"
+    
+    metricas:
+      - nombre: "RegistrosProcesados"
+        unidad: "Count"
+        
+      - nombre: "CalidadPorcentaje"
+        unidad: "Percent"
+        
+      - nombre: "LatenciaSegundos"
+        unidad: "Seconds"
+        
+      - nombre: "ErroresContador"
+        unidad: "Count"
+        
+  # Logs
+  logs:
+    group: "/aws/fintech/pipeline-datos"
+    stream: "{{ ti.task_id }}-{{ ds }}"
+    retencion_dias: 30
